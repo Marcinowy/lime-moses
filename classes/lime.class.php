@@ -53,7 +53,7 @@ class Lime extends Webpages {
     }
     public function filterClosest($bike)
     {
-        return ($bike['distance'] <= 0.2);
+        return ($bike['distance'] <= 0.1);
     }
     private function filter($bike)
     {
