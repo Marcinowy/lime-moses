@@ -18,25 +18,23 @@ if (!isset($token) || count($token)<=0) {
 
 $data = json_decode(file_get_contents('php://input'), true);
 if ($data['type'] == 'callClosest') {
-    function calculateDistance($bike) {
-        global $lat, $long, $lime;
-        $bike['distance'] = $lime->distance($lat, $long, $bike['lat'], $bike['long'], 'K');
-        return $bike;
-    }
-    function filterClosest($bike) {
-        return ($bike['distance'] <= 0.1);
-    }
-    $lat = $data['lat'];
-    $long = $data['long'];
+    $vehicles = $lime->getMap(
+        $data['lat'],
+        $data['long'],
+        $data['lat'],
+        $data['long'],
+        $data['lat'],
+        $data['long'],
+        $token[$tokenID]
+    );
 
-    $vehicles = $lime->getMap($lat, $long, $lat, $long, $lat, $long, $token[$tokenID]);
     if (!$vehicles['success']) {
         echo json_encode(array('success' => false, 'error' => $vehicles['error']));
         exit;
     }
 
-    $vehicles = array_map('calculateDistance', $vehicles['vehicles']);
-    $vehicles = array_filter($vehicles, 'filterClosest');
+    $vehicles = array_map(array($lime, 'calculateDistance'), $vehicles['vehicles']);
+    $vehicles = array_filter($vehicles, array($lime, 'filterClosest'));
 
     $count = array(
         'success' => 0,
@@ -46,6 +44,7 @@ if ($data['type'] == 'callClosest') {
 
     for ($i = 0; $i < count($vehicles); $i++) {
         $call = $lime->ring($vehicles[$i]['id'], $token[$tokenID]);
+
         if ($call['success']) {
             $count['success']++;
             $ids[] = $vehicles[$i]['number'];
@@ -56,6 +55,7 @@ if ($data['type'] == 'callClosest') {
                     echo json_encode(array('success' => false, 'error' => 'No more accounts'));
                     exit;
                 }
+                
                 $call = $lime->ring($vehicles[$i]['id'], $token[$tokenID]);
                 if ($call['success']) {
                     $count['success']++;

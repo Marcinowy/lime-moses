@@ -1,6 +1,6 @@
 <?php
 class Lime extends Webpages {
-    protected $proxy, $proxyauth;
+    protected $proxy, $proxyauth, $u_lat, $u_long;
     public function __construct($proxy = null, $proxyauth = null)
     {
         $this->proxy = $proxy;
@@ -17,7 +17,7 @@ class Lime extends Webpages {
             'proxyauth' => $this->proxyauth
         ));
     }
-    public function distance($lat1, $lon1, $lat2, $lon2, $unit)
+    public function distanceBetweenCords($lat1, $lon1, $lat2, $lon2, $unit)
     {
         if (($lat1 == $lat2) && ($lon1 == $lon2)) {
             return 0;
@@ -39,6 +39,22 @@ class Lime extends Webpages {
             }
         }
     }
+    
+    public function calculateDistance($bike)
+    {
+        $bike['distance'] = $this->distanceBetweenCords(
+            $this->u_lat,
+            $this->u_long,
+            $bike['lat'],
+            $bike['long'],
+            'K'
+        );
+        return $bike;
+    }
+    public function filterClosest($bike)
+    {
+        return ($bike['distance'] <= 0.2);
+    }
     private function filter($bike)
     {
         return array(
@@ -51,6 +67,9 @@ class Lime extends Webpages {
     }
     public function getMap($ne_lat, $ne_long, $sw_lat, $sw_long, $u_lat, $u_long, $token)
     {
+        $this->u_lat = $u_lat;
+        $this->u_long = $u_long;
+
         $map = $this->connectWithLime('/v1/views/map?ne_lat=' . $ne_lat . '&ne_lng=' . $ne_long . '&sw_lat=' . $sw_lat . '&sw_lng=' . $sw_long . '&user_latitude=' . $u_lat . '&user_longitude=' . $u_long . '&zoom=15.0', $token);
         if ($map['httpcode'] == 200) {
             $vehicles = json_decode($map['result'], true);
