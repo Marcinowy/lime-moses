@@ -2,22 +2,21 @@
 include 'includes/autoload.php';
 require (__DIR__ . '/../webpages/webpages.php');
 $webpages = new Webpages;
-$data = json_decode(file_get_contents('php://input'), true);
 header('Content-Type: application/json');
 
 $proxy = null;
 $proxyauth = null;
 $lime = new lime($proxy, $proxyauth);
 
-$token = array(
-    //oauth tokens
-);
+include 'tokens.php';
 $tokenID = 0;
 
-if (count($token)<=0) {
-    echo json_encode(array('success' => false, 'error' => 'Please edit $token array'));
+if (!isset($token) || count($token)<=0) {
+    echo json_encode(array('success' => false, 'error' => 'Please edit tokens.php file'));
     exit;
 }
+
+$data = json_decode(file_get_contents('php://input'), true);
 if ($data['type'] == 'callClosest') {
     function calculateDistance($bike) {
         global $lat, $long, $lime;
