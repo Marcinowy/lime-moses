@@ -1,7 +1,5 @@
 <?php
 include 'includes/autoload.php';
-require (__DIR__ . '/../webpages/webpages.php');
-$webpages = new Webpages;
 header('Content-Type: application/json');
 
 include 'tokens.php';
