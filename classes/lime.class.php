@@ -1,24 +1,50 @@
 <?php
-class Lime extends Webpages {
-    protected $proxy, $proxyauth, $u_lat, $u_long;
-    public function __construct($proxy = null, $proxyauth = null)
+class Lime {
+    private $tokens, $tokenId = 0, $proxy, $proxyauth, $user_latitude, $user_longitude, $vehicles = [];
+
+    public function __construct(array $tokens, string $proxy = null, string $proxyauth = null)
     {
+        $this->tokens = $tokens;
         $this->proxy = $proxy;
         $this->proxyauth = $proxyauth;
     }
-    protected function connectWithLime($path, $token, $method = 'GET', $data = array())
+    private function connectWithLime($path, $method = 'GET', $data = [])
     {
         $url = 'https://web-production.lime.bike/api/rider' . $path;
-        return $this->Connect(array(
-            'url' => $url,
-            'header' => array('authorization:	Bearer ' . $token),
-            'method' => $method,
-            'proxy' => $this->proxy,
-            'proxyauth' => $this->proxyauth
-        ));
+
+        $headers = [
+            'authorization:	Bearer ' . $this->tokens[$this->tokenId],
+        ];
+        $isPost = strtoupper($method) === 'POST';
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_HEADER, false);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, $isPost);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        if ($isPost) {
+            curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
+        }
+        if ($this->proxy) {
+            curl_setopt($ch, CURLOPT_PROXY, $this->proxy);
+            if ($this->proxyauth) {
+                curl_setopt($ch, CURLOPT_PROXYUSERPWD, $this->proxyauth);
+            }
+        }
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        $output = curl_exec($ch);
+        $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        if  ($httpcode != 200) {
+            throw new Exception('Cannot connect with lime service. Httpcode: ' . $httpcode);
+        }
+        return $output;
     }
-    public function distanceBetweenCords($lat1, $lon1, $lat2, $lon2, $unit)
+    public function calculateDistance($lat2, $lon2)
     {
+        $lat1 = $this->user_latitude;
+        $lon1 = $this->user_longitude;
+        $unit = 'K';
+
         if (($lat1 == $lat2) && ($lon1 == $lon2)) {
             return 0;
         }
@@ -39,72 +65,70 @@ class Lime extends Webpages {
             }
         }
     }
-    
-    public function calculateDistance($bike)
+    public function filterClosest($distance)
     {
-        $bike['distance'] = $this->distanceBetweenCords(
-            $this->u_lat,
-            $this->u_long,
-            $bike['lat'],
-            $bike['long'],
-            'K'
-        );
-        return $bike;
+        $this->vehicles = array_filter($this->vehicles, function($bike) use ($distance) {
+            return ($bike['distance'] <= $distance);
+        });
+        return $this;
     }
-    public function filterClosest($bike)
+    public function updateMap($ne_lat, $ne_lng, $sw_lat, $sw_lng, $user_latitude, $user_longitude)
     {
-        return ($bike['distance'] <= 0.1);
-    }
-    private function filter($bike)
-    {
-        return array(
-            'id' => $bike['id'],
-            'number' => $bike['attributes']['plate_number'],
-            'lat' => $bike['attributes']['latitude'],
-            'long' => $bike['attributes']['longitude'],
-            'last_activity_at' => $bike['attributes']['last_activity_at'],
-        );
-    }
-    public function getMap($ne_lat, $ne_long, $sw_lat, $sw_long, $u_lat, $u_long, $token)
-    {
-        $this->u_lat = $u_lat;
-        $this->u_long = $u_long;
+        $this->user_latitude = $user_latitude;
+        $this->user_longitude = $user_longitude;
 
-        $map = $this->connectWithLime('/v1/views/map?ne_lat=' . $ne_lat . '&ne_lng=' . $ne_long . '&sw_lat=' . $sw_lat . '&sw_lng=' . $sw_long . '&user_latitude=' . $u_lat . '&user_longitude=' . $u_long . '&zoom=15.0', $token);
-        if ($map['httpcode'] == 200) {
-            $vehicles = json_decode($map['result'], true);
-            $vehicles = $vehicles['data']['attributes']['bikes'];
-            $vehicles = array_map(array($this, 'filter'), $vehicles);
-            return array('success' => true, 'vehicles' => $vehicles);
-        } else {
-            return array(
-                'success' => false,
-                'error' => 'Can\'t get map. Httpcode: ' . $map['httpcode']
-            );
-        }
+        $data = compact('ne_lat', 'ne_lng', 'sw_lat', 'sw_lng', 'user_latitude', 'user_longitude');
+        $data['zoom'] = '15.0';
+        $query = http_build_query($data);
+        $map = $this->connectWithLime('/v1/views/map?' . $query);
+        $vehicles = json_decode($map, true);
+
+        $vehicles = $vehicles['data']['attributes']['bikes'];
+        $this->vehicles = array_map(function ($bike) {
+            return [
+                'id' => $bike['id'],
+                'number' => $bike['attributes']['plate_number'],
+                'lat' => $bike['attributes']['latitude'],
+                'long' => $bike['attributes']['longitude'],
+                'last_activity_at' => $bike['attributes']['last_activity_at'],
+                'distance' => $this->calculateDistance(
+                    $bike['attributes']['latitude'],
+                    $bike['attributes']['longitude']
+                ),
+            ];
+        }, $vehicles);
+        return $this;
     }
-    public function ring($id, $token)
+    public function ring(string $id, $again = false)
     {
-        $req = $this->connectWithLime('/v1/bikes/' . $id . '/ring', $token, 'POST');
-        if ($req['httpcode'] != 200) {
-            return array(
-                'success' => false,
-                'error' => 'Can\'t ring. Httpcode: ' . $req['httpcode']
-            );
-        }
-        $call = json_decode($req['result'], true);
-        if (count($call)===0) {
-            return array('success' => true);
+        $req = $this->connectWithLime('/v1/bikes/' . $id . '/ring', 'POST');
+        $call = json_decode($req, true);
+        if (count($call) === 0) {
+            return ['success' => true];
         } else {
-            if (isset($call['bike_missing_report'])) {
-                return $this->ring($id, $token);
+            if (isset($call['bike_missing_report']) && !$again) {
+                return $this->ring($id, true);
             }
             $errors = array_column($call['errors'], 'status');
-            return array(
-                'success' => false,
-                'error' => $errors,
-                'httpcode' => $req['httpcode']
-            );
+            if (in_array('ring_bike_rate_limited', $errors)) {
+                $this->tokenId++;
+                if (!isset($this->tokens[$this->tokenId])) {
+                    return [
+                        'success' => false,
+                        'error' => 'No more accounts'
+                    ];
+                }
+                return $this->ring($id);
+            } else {
+                return [
+                    'success' => false,
+                    'error' => $errors,
+                ];
+            }
         }
+    }
+    public function getVehicles()
+    {
+        return $this->vehicles;
     }
 }

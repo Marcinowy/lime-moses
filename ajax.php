@@ -4,70 +4,61 @@ require (__DIR__ . '/../webpages/webpages.php');
 $webpages = new Webpages;
 header('Content-Type: application/json');
 
+include 'tokens.php';
+
 $proxy = null;
 $proxyauth = null;
-$lime = new lime($proxy, $proxyauth);
-
-include 'tokens.php';
-$tokenID = 0;
 
 if (!isset($token) || count($token)<=0) {
-    echo json_encode(array('success' => false, 'error' => 'Please edit tokens.php file'));
+    echo json_encode([
+        'success' => false,
+        'error' => 'Please edit tokens.php file',
+    ]);
     exit;
 }
 
+$lime = new lime($token, $proxy, $proxyauth);
+
 $data = json_decode(file_get_contents('php://input'), true);
 if ($data['type'] == 'callClosest') {
-    $vehicles = $lime->getMap(
-        $data['lat'],
-        $data['long'],
-        $data['lat'],
-        $data['long'],
-        $data['lat'],
-        $data['long'],
-        $token[$tokenID]
-    );
+    try {
+        $vehicles = $lime->updateMap(
+            $data['lat'],
+            $data['long'],
+            $data['lat'],
+            $data['long'],
+            $data['lat'],
+            $data['long']
+        )->filterClosest(0.1)->getVehicles();
+        
+        $count = [
+            'success' => 0,
+            'error' => 0
+        ];
+        $ids = [];
 
-    if (!$vehicles['success']) {
-        echo json_encode(array('success' => false, 'error' => $vehicles['error']));
-        exit;
-    }
-
-    $vehicles = array_map(array($lime, 'calculateDistance'), $vehicles['vehicles']);
-    $vehicles = array_filter($vehicles, array($lime, 'filterClosest'));
-
-    $count = array(
-        'success' => 0,
-        'error' => 0
-    );
-    $ids = [];
-
-    for ($i = 0; $i < count($vehicles); $i++) {
-        $call = $lime->ring($vehicles[$i]['id'], $token[$tokenID]);
-
-        if ($call['success']) {
-            $count['success']++;
-            $ids[] = $vehicles[$i]['number'];
-        } else {
-            if (in_array('ring_bike_rate_limited', $call['error'])) {
-                $tokenID++;
-                if (!isset($token[$tokenID])) {
-                    echo json_encode(array('success' => false, 'error' => 'No more accounts'));
-                    exit;
-                }
-                
-                $call = $lime->ring($vehicles[$i]['id'], $token[$tokenID]);
-                if ($call['success']) {
-                    $count['success']++;
-                    $ids[] = $vehicles[$i]['number'];
-                } else $count['error']++;
+        for ($i = 0; $i < count($vehicles); $i++) {
+            $call = $lime->ring($vehicles[$i]['id']);
+    
+            if ($call['success']) {
+                $count['success']++;
+                $ids[] = $vehicles[$i]['number'];
             } else {
                 $count['error']++;
             }
         }
+
+        echo json_encode([
+            'success'=> true,
+            'result' => $count,
+            'ids' => $ids,
+        ], JSON_PRETTY_PRINT);
+
+    } catch (Exception $e) {
+        echo json_encode([
+            'success' => false,
+            'error' => $e,
+        ], JSON_PRETTY_PRINT);
     }
-
-    echo json_encode(array('success'=> true, 'result' => $count, 'ids' => $ids), JSON_PRETTY_PRINT);
 }
-
 ?>
